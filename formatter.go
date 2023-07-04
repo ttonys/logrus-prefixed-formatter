@@ -6,13 +6,14 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/mgutz/ansi"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -115,6 +116,12 @@ type TextFormatter struct {
 
 	// Whether the logger's out is to a terminal.
 	isTerminal bool
+
+	// CallerPrettyfier can be set by the user to modify the content
+	// of the function and file keys in the data when ReportCaller is
+	// activated. If any of the returned value is the empty string the
+	// corresponding key will be removed from fields.
+	CallerPrettyfier func(*runtime.Frame) (function string, file string)
 
 	sync.Once
 }
