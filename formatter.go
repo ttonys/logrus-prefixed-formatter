@@ -19,6 +19,20 @@ import (
 
 const defaultTimestampFormat = time.RFC3339
 
+type fieldKey string
+
+// FieldMap allows customization of the key names for default fields.
+type FieldMap map[fieldKey]string
+
+// FieldMap allows customization of the key names for default fields.
+func (f FieldMap) resolve(key fieldKey) string {
+	if k, ok := f[key]; ok {
+		return k
+	}
+
+	return string(key)
+}
+
 var (
 	baseTimestamp      time.Time    = time.Now()
 	defaultColorScheme *ColorScheme = &ColorScheme{
@@ -123,6 +137,8 @@ type TextFormatter struct {
 	// corresponding key will be removed from fields.
 	CallerPrettyfier func(*runtime.Frame) (function string, file string)
 
+	FieldMap FieldMap
+
 	sync.Once
 }
 
@@ -172,8 +188,11 @@ func (f *TextFormatter) SetColorScheme(colorScheme *ColorScheme) {
 }
 
 func (f *TextFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	data := make(logrus.Fields)
 	var b *bytes.Buffer
+	var funcVal, fileVal string
 	var keys []string = make([]string, 0, len(entry.Data))
+	fixedKeys := make([]string, 0, 4+len(data))
 	for k := range entry.Data {
 		keys = append(keys, k)
 	}
@@ -210,7 +229,22 @@ func (f *TextFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 		} else {
 			colorScheme = noColorsColorScheme
 		}
-		f.printColored(b, entry, keys, timestampFormat, colorScheme)
+		if entry.HasCaller() {
+			if f.CallerPrettyfier != nil {
+				funcVal, fileVal = f.CallerPrettyfier(entry.Caller)
+			} else {
+				funcVal = entry.Caller.Function
+				fileVal = fmt.Sprintf("%s:%d", entry.Caller.File, entry.Caller.Line)
+			}
+
+			if funcVal != "" {
+				fixedKeys = append(fixedKeys, f.FieldMap.resolve(logrus.FieldKeyFunc))
+			}
+			if fileVal != "" {
+				fixedKeys = append(fixedKeys, f.FieldMap.resolve(logrus.FieldKeyFile))
+			}
+		}
+		f.printColored(b, entry, keys, timestampFormat, colorScheme, funcVal, fileVal)
 	} else {
 		if !f.DisableTimestamp {
 			f.appendKeyValue(b, "time", entry.Time.Format(timestampFormat), true)
@@ -228,7 +262,7 @@ func (f *TextFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func (f *TextFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys []string, timestampFormat string, colorScheme *compiledColorScheme) {
+func (f *TextFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys []string, timestampFormat string, colorScheme *compiledColorScheme, funcVal string, fileVal string) {
 	var levelColor func(string) string
 	var levelText string
 	switch entry.Level {
@@ -257,6 +291,8 @@ func (f *TextFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys 
 	}
 
 	level := levelColor(fmt.Sprintf("%5s", levelText))
+	funcVal = colorScheme.PrefixColor(funcVal)
+	fileVal = colorScheme.PrefixColor(fileVal)
 	prefix := ""
 	message := entry.Message
 
@@ -276,7 +312,12 @@ func (f *TextFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys 
 	}
 
 	if f.DisableTimestamp {
-		fmt.Fprintf(b, "%s%s "+messageFormat, level, prefix, message)
+		if entry.HasCaller() {
+			fmt.Fprintf(b, "%s%s[%s:%s]%s "+messageFormat, level, funcVal, fileVal, prefix, message)
+		} else {
+			fmt.Fprintf(b, "%s%s%s "+messageFormat, level, prefix, message)
+		}
+
 	} else {
 		var timestamp string
 		if !f.FullTimestamp {
@@ -284,7 +325,12 @@ func (f *TextFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys 
 		} else {
 			timestamp = fmt.Sprintf("[%s]", entry.Time.Format(timestampFormat))
 		}
-		fmt.Fprintf(b, "%s %s%s "+messageFormat, colorScheme.TimestampColor(timestamp), level, prefix, message)
+		if entry.HasCaller() {
+			fmt.Fprintf(b, "%s %s[%s:%s]%s "+messageFormat, colorScheme.TimestampColor(timestamp), level, funcVal, fileVal, prefix, message)
+		} else {
+			fmt.Fprintf(b, "%s %s%s "+messageFormat, colorScheme.TimestampColor(timestamp), level, prefix, message)
+		}
+
 	}
 	for _, k := range keys {
 		if k != "prefix" {
@@ -352,12 +398,12 @@ func (f *TextFormatter) appendValue(b *bytes.Buffer, value interface{}) {
 // This is to not silently overwrite `time`, `msg` and `level` fields when
 // dumping it. If this code wasn't there doing:
 //
-//  logrus.WithField("level", 1).Info("hello")
+//	logrus.WithField("level", 1).Info("hello")
 //
 // would just silently drop the user provided level. Instead with this code
 // it'll be logged as:
 //
-//  {"level": "info", "fields.level": 1, "msg": "hello", "time": "..."}
+//	{"level": "info", "fields.level": 1, "msg": "hello", "time": "..."}
 func prefixFieldClashes(data logrus.Fields) {
 	if t, ok := data["time"]; ok {
 		data["fields.time"] = t

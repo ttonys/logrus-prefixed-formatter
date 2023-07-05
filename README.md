@@ -5,8 +5,6 @@
 modified colored output and support for log entry prefixes, e.g. message source followed by a colon. In addition, custom
 color themes are supported.
 
-![Formatter screenshot](http://cl.ly/image/1w0B3F233F3z/formatter-screenshot@2x.png)
-
 Just like with the original `logrus.TextFormatter` when a TTY is not attached, the output is compatible with the
 [logfmt](http://godoc.org/github.com/kr/logfmt) format:
 
@@ -31,32 +29,47 @@ $ go get github.com/ttonys/logrus-prefixed-formatter
 Here is how it should be used:
 
 ```go
-package main
+package prefixed
 
 import (
-	"github.com/sirupsen/logrus"
-	prefixed "github.com/ttonys/logrus-prefixed-formatter"
+	log "github.com/sirupsen/logrus"
+	"os"
+	"path"
+	"runtime"
+	"strconv"
+	"strings"
+	"testing"
 )
 
-var log = logrus.New()
+var Logger *log.Logger
 
-func init() {
-	log.Formatter = new(prefixed.TextFormatter)
-	log.Level = logrus.DebugLevel
+func TestFormatter(t *testing.T) {
+	Logger = log.New()
+
+	var stdFormatter *TextFormatter
+	Logger.SetLevel(log.InfoLevel)
+
+	stdFormatter = &TextFormatter{
+		FullTimestamp:    true,
+		TimestampFormat:  "2006-01-02 15:04:05",
+		ForceFormatting:  true,
+		ForceColors:      true,
+		DisableColors:    false,
+		QuoteEmptyFields: true,
+		SpacePadding:     60,
+		CallerPrettyfier: func(frame *runtime.Frame) (function string, file string) {
+			funcName := strings.Split(path.Base(frame.Function), ".")[len(strings.Split(path.Base(frame.Function), "."))-1]
+			fileName := path.Base(frame.File) + ":" + strconv.Itoa(frame.Line)
+			return funcName, fileName
+		},
+	}
+
+	Logger.SetFormatter(stdFormatter)
+	Logger.SetOutput(os.Stdout)
+	Logger.SetReportCaller(true)
+	Logger.Infof("test")
 }
 
-func main() {
-	log.WithFields(logrus.Fields{
-		"prefix": "main",
-		"animal": "walrus",
-		"number": 8,
-	}).Debug("Started observing beach")
-
-	log.WithFields(logrus.Fields{
-		"prefix":      "sensor",
-		"temperature": -4,
-	}).Info("Temperature changes")
-}
 ```
 
 ## API
